@@ -1,0 +1,24 @@
+# Ignore Node modules
+frontend/node_modules/
+frontend/.next/
+
+# Ignore Python cache
+__pycache__/
+*.pyc
+
+# Ignore large datasets
+data/*.parquet
+data/*.shp
+data/*.dbf
+data/*.shx
+data/*.prj
+data/*.cpg
+
+# Ignore heavy ML models
+backend/model/
+
+# Ignore reports and artifacts
+IEEE_Project_Report.md
+IEEE_Project_Report_Overleaf.md
+project.md
+check_*.ps1
