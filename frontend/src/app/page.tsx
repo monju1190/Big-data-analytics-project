@@ -12,6 +12,7 @@ const MapWithNoSSR = dynamic(() => import('../components/Map'), {
 export default function Home() {
   const [hotspots, setHotspots] = useState([]);
   const [testSamples, setTestSamples] = useState([]);
+  const [metrics, setMetrics] = useState<any>(null);
   const [prediction, setPrediction] = useState<number | null>(null);
   const [actualDuration, setActualDuration] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
@@ -35,6 +36,12 @@ export default function Home() {
       .then(res => res.json())
       .then(data => setTestSamples(data))
       .catch(err => console.error("Error fetching test samples:", err));
+
+    // Fetch metrics
+    fetch('http://localhost:8000/api/metrics')
+      .then(res => res.json())
+      .then(data => setMetrics(data))
+      .catch(err => console.error("Error fetching metrics:", err));
   }, []);
   
   const handlePredict = async (e: React.FormEvent) => {
@@ -182,10 +189,15 @@ export default function Home() {
           <p className="text-gray-400 mt-1">PySpark Distributed RandomForestRegressor performance metrics and graphs.</p>
         </div>
         
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
           <div className="bg-white/5 rounded-xl border border-white/10 p-4">
-            <h3 className="text-lg font-semibold text-center text-gray-200 mb-4">Actual vs Predicted Duration</h3>
-            <img src="/metrics/actual_vs_predicted.png" alt="Actual vs Predicted" className="w-full rounded-lg shadow-md bg-white p-2" />
+            <h3 className="text-lg font-semibold text-center text-gray-200 mb-4">Actual vs Predicted (Line)</h3>
+            <img src="/metrics/actual_vs_predicted.png" alt="Actual vs Predicted Line" className="w-full rounded-lg shadow-md bg-white p-2" />
+          </div>
+          
+          <div className="bg-white/5 rounded-xl border border-white/10 p-4">
+            <h3 className="text-lg font-semibold text-center text-gray-200 mb-4">Actual vs Predicted (Scatter)</h3>
+            <img src="/metrics/actual_vs_predicted_scatter.png" alt="Actual vs Predicted Scatter" className="w-full rounded-lg shadow-md bg-white p-2" />
           </div>
           
           <div className="bg-white/5 rounded-xl border border-white/10 p-4">
@@ -196,16 +208,16 @@ export default function Home() {
         
         <div className="mt-8 grid grid-cols-3 gap-4 text-center">
           <div className="bg-gray-800 p-4 rounded-xl border border-gray-700">
-            <p className="text-gray-400 text-sm uppercase font-bold tracking-wider mb-1">R² Score</p>
-            <p className="text-2xl font-mono text-emerald-400">~ 0.82</p>
+            <p className="text-gray-400 text-sm uppercase font-bold tracking-wider mb-1">R² Score (Accuracy)</p>
+            <p className="text-2xl font-mono text-emerald-400">{metrics ? (metrics.R2_Score * 100).toFixed(1) + "%" : "..."}</p>
           </div>
           <div className="bg-gray-800 p-4 rounded-xl border border-gray-700">
             <p className="text-gray-400 text-sm uppercase font-bold tracking-wider mb-1">RMSE</p>
-            <p className="text-2xl font-mono text-blue-400">~ 4.15 mins</p>
+            <p className="text-2xl font-mono text-blue-400">{metrics ? metrics.RMSE : "..."} mins</p>
           </div>
           <div className="bg-gray-800 p-4 rounded-xl border border-gray-700">
             <p className="text-gray-400 text-sm uppercase font-bold tracking-wider mb-1">MAE</p>
-            <p className="text-2xl font-mono text-purple-400">~ 2.80 mins</p>
+            <p className="text-2xl font-mono text-purple-400">{metrics ? metrics.MAE : "..."} mins</p>
           </div>
         </div>
       </div>

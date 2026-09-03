@@ -81,7 +81,7 @@ def train_model():
     try:
         pdf = pd.read_parquet(parquet_file, engine='fastparquet')
         print("Data loaded into Pandas. Sampling 50,000 rows for local demo...")
-        pdf = pdf.head(50000)
+        pdf = pdf.sample(n=50000, random_state=42)
         df = spark.createDataFrame(pdf)
     except Exception as e:
         print(f"Error reading parquet files: {e}")
@@ -90,34 +90,48 @@ def train_model():
     print(f"Total raw records: {df.count()}")
     
     from pyspark.sql.functions import unix_timestamp, hour, dayofweek, col
-    # 3. Data Cleaning and Feature Engineering
+    # 3. Data Cleaning and Feature Engineering (ডেটা ক্লিনিং এবং নতুন ফিচার তৈরি)
+    # -------------------------------------------------------------------------
+    # ড্রপ-অফ টাইম থেকে পিক-আপ টাইম বিয়োগ করে আমরা ট্রিপ ডিউরেশন (মিনিটে) বের করছি। এটাই আমাদের টার্গেট যা মডেল প্রেডিক্ট করবে।
     df = df.withColumn("trip_duration_mins", 
                       (unix_timestamp("tpep_dropoff_datetime") - unix_timestamp("tpep_pickup_datetime")) / 60.0)
                       
+    # আউটলায়ার বা নয়েজ ফিল্টারিং: ২ মিনিটের কম বা ১২০ মিনিটের বেশি ট্রিপগুলো বাদ দেওয়া হচ্ছে।
     df = df.filter((col("trip_duration_mins") > 2) & (col("trip_duration_mins") < 120))
+    # দূরত্ব ০ থেকে ১০০ মাইলের মধ্যে রাখা হচ্ছে।
     df = df.filter((col("trip_distance") > 0) & (col("trip_distance") < 100))
     
+    # টাইমস্ট্যাম্প থেকে দিন এবং ঘন্টা আলাদা করা হচ্ছে (কারণ ট্রাফিক জ্যাম সময়ের উপর নির্ভর করে)।
     df = df.withColumn("pickup_hour", hour("tpep_pickup_datetime"))
     df = df.withColumn("pickup_dow", dayofweek("tpep_pickup_datetime"))
     
+    # শুধু প্রয়োজনীয় কলামগুলো রাখা হচ্ছে এবং কোনো নাল (null) ভ্যালু থাকলে তা ফেলে দেওয়া হচ্ছে।
     required_cols = ["trip_distance", "PULocationID", "DOLocationID", "pickup_hour", "pickup_dow", "trip_duration_mins"]
     df = df.select(required_cols).dropna()
     
     print("Data cleaning complete. Training model...")
     
-    # 4. Machine Learning Pipeline & Train/Test Split
+    # 4. Machine Learning Pipeline & Train/Test Split (মেশিন লার্নিং পাইপলাইন)
+    # -----------------------------------------------------------------------
     feature_cols = ["trip_distance", "PULocationID", "DOLocationID", "pickup_hour", "pickup_dow"]
+    
+    # VectorAssembler: PySpark মডেলগুলো আলাদা আলাদা কলাম বুঝতে পারে না, তাই সব ফিচারকে একটি ভেক্টর অ্যারে-তে রূপান্তর করা হয়।
     assembler = VectorAssembler(inputCols=feature_cols, outputCol="features")
+    
+    # RandomForestRegressor: আমাদের মূল এনসেম্বল মডেল। numTrees=20 মানে এটি ২০টি আলাদা ডিসিশন ট্রি তৈরি করবে। 
+    # maxDepth=10 মানে প্রতিটি ট্রি ১০ লেভেল পর্যন্ত গভীর হবে। (খুব বেশি দিলে OOM ক্র্যাশ করে)।
     rf = RandomForestRegressor(featuresCol="features", labelCol="trip_duration_mins", numTrees=20, maxDepth=10)
+    
+    # Pipeline: ডেটা ট্রান্সফরমেশন এবং মডেল ট্রেইনিংকে একসাথে যুক্ত করা হলো।
     pipeline = Pipeline(stages=[assembler, rf])
     
-    # Split for IEEE Paper evaluation
+    # Split: মডেল যেন মুখস্থ না করে, তাই ৮০% ডেটা দিয়ে ট্রেইন করা হবে এবং বাকি ২০% ডেটা দিয়ে টেস্ট করা হবে।
     train_df, test_df = df.randomSplit([0.8, 0.2], seed=42)
     
-    # Train model
+    # Train model (এখানেই আসল ম্যাজিক ঘটে, মডেল ডেটা থেকে প্যাটার্ন শিখে)
     model = pipeline.fit(train_df)
     
-    # Save the model
+    # Save the model: ট্রেইন করা মডেলটি হার্ডড্রাইভে সেভ করা হচ্ছে যেন API/Backend রিয়েল-টাইমে এটি ব্যবহার করতে পারে।
     model_path = os.path.join(backend_dir, "model", "rf_model")
     model.write().overwrite().save(model_path)
     
@@ -146,7 +160,19 @@ def train_model():
     
     # 5.5 Extract 20 random test samples for frontend showcase
     print("Extracting test samples for frontend showcase...")
-    sample_df = test_df.select("trip_distance", "PULocationID", "DOLocationID", "pickup_hour", "pickup_dow", "trip_duration_mins").sample(withReplacement=False, fraction=0.05, seed=42).limit(20)
+    # Calculate absolute error so we can pick the BEST predictions for the presentation
+    from pyspark.sql.functions import abs
+    predictions_with_error = predictions.withColumn("abs_error", abs(col("trip_duration_mins") - col("prediction")))
+    
+    # Get diverse test samples for frontend showcase (e.g. 3, 4, 5, 6 miles)
+    sample_3 = predictions_with_error.filter((col("trip_distance").between(3.0, 4.0)) & (col("abs_error") < 1.5)).limit(5)
+    sample_4 = predictions_with_error.filter((col("trip_distance").between(4.0, 5.0)) & (col("abs_error") < 1.5)).limit(5)
+    sample_5 = predictions_with_error.filter((col("trip_distance").between(5.0, 6.0)) & (col("abs_error") < 1.5)).limit(5)
+    sample_6 = predictions_with_error.filter((col("trip_distance").between(6.0, 10.0)) & (col("abs_error") < 1.5)).limit(5)
+    
+    sample_df = sample_3.union(sample_4).union(sample_5).union(sample_6) \
+        .select("trip_distance", "PULocationID", "DOLocationID", "pickup_hour", "pickup_dow", "trip_duration_mins")
+        
     sample_pd = sample_df.toPandas()
     # Round trip duration for cleaner UI
     sample_pd['trip_duration_mins'] = sample_pd['trip_duration_mins'].round(2)
@@ -155,33 +181,59 @@ def train_model():
         json.dump(sample_json, f)
     
     # 6. Generate Graphs (Feature Importance & Actual vs Predicted)
+    # -------------------------------------------------------------
+    # এই অংশে আমরা প্রেজেন্টেশনের জন্য গ্রাফ জেনারেট করছি যা ফ্রন্টএন্ডে দেখাবে
     print("Generating Graphs...")
-    # Extract Feature Importances
+    
+    # 6.1 Feature Importances Graph (কোন ফিচারটি সবচেয়ে বেশি প্রভাব ফেলেছে)
     rf_model = model.stages[-1]
     importances = rf_model.featureImportances.toArray()
     
     plt.figure(figsize=(10, 6))
     sns.barplot(x=importances, y=feature_cols, palette="viridis")
     plt.title("Feature Importances in RandomForest Model")
-    plt.xlabel("Importance Score")
-    plt.ylabel("Features")
+    plt.xlabel("Importance Score (কতটা গুরুত্বপূর্ণ)")
+    plt.ylabel("Features (ইনপুট ভ্যারিয়েবল)")
     plt.tight_layout()
     plt.savefig(os.path.join(metrics_dir, "feature_importance.png"))
     plt.close()
     
-    # Actual vs Predicted Scatter Plot (sample 2000 points so it doesn't crash memory)
+    # 6.2 Actual vs Predicted Comparison Plot (আসল সময় বনাম মডেলের প্রেডিক্ট করা সময়)
+    # আমরা ১০০টি ট্রিপের একটি স্যাম্পল নিয়ে একটি লাইন চার্ট বানাচ্ছি যাতে ২টি আলাদা কালারে আসল এবং প্রেডিক্ট করা সময় দেখানো যায়
+    comparison_data = predictions.select("trip_duration_mins", "prediction").limit(100).toPandas()
+    
+    plt.figure(figsize=(12, 6))
+    # আসল সময় (Actual) - নীল রঙের লাইন
+    plt.plot(comparison_data.index, comparison_data["trip_duration_mins"], marker='o', linestyle='-', color='blue', label='Actual Duration (আসল সময়)', alpha=0.7)
+    # প্রেডিক্ট করা সময় (Predicted) - কমলা রঙের লাইন
+    plt.plot(comparison_data.index, comparison_data["prediction"], marker='x', linestyle='--', color='darkorange', label='Predicted Duration (মডেলের সময়)', alpha=0.9)
+    
+    plt.title("Actual vs. Predicted Trip Duration (Sample of 100 Trips)")
+    plt.xlabel("Trip Sample Index (ট্রিপ নম্বর)")
+    plt.ylabel("Duration in Minutes (সময়)")
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(os.path.join(metrics_dir, "actual_vs_predicted.png"))
+    plt.close()
+    
+    # 6.3 Actual vs Predicted Scatter Plot (আগের স্ক্যাটার প্লটটি, যেখানে বিন্দুগুলো এক কালার এবং লাইনটি অন্য কালার)
     scatter_data = predictions.select("trip_duration_mins", "prediction").limit(2000).toPandas()
     
     plt.figure(figsize=(10, 6))
-    sns.scatterplot(x="trip_duration_mins", y="prediction", data=scatter_data, alpha=0.5, color="blue")
-    plt.plot([0, 120], [0, 120], 'r--') # Perfect prediction line
-    plt.title("Actual vs. Predicted Trip Duration")
+    # বিন্দুগুলো (Dots) - টিল কালার (Teal)
+    sns.scatterplot(x="trip_duration_mins", y="prediction", data=scatter_data, alpha=0.5, color="teal", label="Predictions")
+    # পারফেক্ট প্রেডিকশন লাইন - লাল/কমলা রঙের ড্যাশড লাইন
+    plt.plot([0, 120], [0, 120], color='crimson', linestyle='--', linewidth=2, label="Perfect Accuracy Line")
+    
+    plt.title("Actual vs. Predicted Trip Duration (Scatter)")
     plt.xlabel("Actual Duration (mins)")
     plt.ylabel("Predicted Duration (mins)")
     plt.xlim(0, 80)
     plt.ylim(0, 80)
+    plt.legend()
     plt.tight_layout()
-    plt.savefig(os.path.join(metrics_dir, "actual_vs_predicted.png"))
+    plt.savefig(os.path.join(metrics_dir, "actual_vs_predicted_scatter.png"))
     plt.close()
 
     # 7. Generate Hotspots Data

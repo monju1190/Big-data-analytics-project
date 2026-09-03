@@ -94,6 +94,17 @@ async def get_test_samples():
         data = json.load(f)
     return data
 
+@app.get("/api/metrics")
+async def get_metrics():
+    """Returns the evaluation metrics from the trained model."""
+    metrics_path = os.path.join(base_dir, "data", "metrics.json")
+    if not os.path.exists(metrics_path):
+        raise HTTPException(status_code=404, detail="Metrics not found. Run ml/train.py first.")
+    
+    with open(metrics_path, "r") as f:
+        data = json.load(f)
+    return data
+
 @app.post("/api/predict")
 async def predict_duration(req: PredictionRequest):
     """Runs a live prediction through the PySpark ML model."""
