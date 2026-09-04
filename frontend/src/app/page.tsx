@@ -12,6 +12,7 @@ const MapWithNoSSR = dynamic(() => import('../components/Map'), {
 export default function Home() {
   const [hotspots, setHotspots] = useState([]);
   const [testSamples, setTestSamples] = useState([]);
+  const [zones, setZones] = useState<any>(null);
   const [metrics, setMetrics] = useState<any>(null);
   const [prediction, setPrediction] = useState<number | null>(null);
   const [actualDuration, setActualDuration] = useState<number | null>(null);
@@ -25,6 +26,12 @@ export default function Home() {
   const [dow, setDow] = useState(3); // Wednesday
   
   useEffect(() => {
+    // Fetch all zones for distance calculation
+    fetch('http://localhost:8000/api/zones')
+      .then(res => res.json())
+      .then(data => setZones(data))
+      .catch(err => console.error("Error fetching zones:", err));
+
     // Fetch hotspot data from FastAPI backend
     fetch('http://localhost:8000/api/hotspots')
       .then(res => res.json())
@@ -44,6 +51,30 @@ export default function Home() {
       .catch(err => console.error("Error fetching metrics:", err));
   }, []);
   
+  const handleEstimateDistance = () => {
+    if (zones && zones[locationId] && zones[doLocationId]) {
+      const lat1 = zones[locationId].lat;
+      const lon1 = zones[locationId].lon;
+      const lat2 = zones[doLocationId].lat;
+      const lon2 = zones[doLocationId].lon;
+      
+      const R = 3958.8; // Radius of Earth in miles
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLon = (lon2 - lon1) * Math.PI / 180;
+      const a = 
+        Math.sin(dLat/2) * Math.sin(dLat/2) +
+        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+        Math.sin(dLon/2) * Math.sin(dLon/2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      let d = R * c; 
+      
+      d = d * 1.35; // Manhattan routing factor approximation
+      setDistance(parseFloat(d.toFixed(2)));
+    } else {
+      alert("Please wait for zone data to load or select valid zones.");
+    }
+  };
+
   const handlePredict = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -87,7 +118,12 @@ export default function Home() {
             
             <form onSubmit={handlePredict} className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Trip Distance (miles)</label>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="block text-xs font-semibold text-gray-500 uppercase">Trip Distance (miles)</label>
+                  <button type="button" onClick={handleEstimateDistance} className="text-xs text-blue-400 hover:text-blue-300 font-bold bg-blue-900/30 px-2 py-0.5 rounded border border-blue-800/50 transition">
+                    Auto-Estimate
+                  </button>
+                </div>
                 <input type="number" step="0.1" value={distance} onChange={e => setDistance(parseFloat(e.target.value))} 
                        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none" />
               </div>

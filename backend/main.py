@@ -105,6 +105,23 @@ async def get_metrics():
         data = json.load(f)
     return data
 
+@app.get("/api/zones")
+async def get_zones():
+    """Returns mapping of LocationID to coordinates to help frontend compute distance."""
+    csv_path = os.path.join(os.path.dirname(base_dir), "data", "taxi_zones_centroids.csv")
+    if not os.path.exists(csv_path):
+        raise HTTPException(status_code=404, detail=f"Zones data not found at {csv_path}")
+    
+    import pandas as pd
+    df = pd.read_csv(csv_path)
+    zones_dict = {}
+    for _, row in df.iterrows():
+        zones_dict[str(int(row['LocationID']))] = {
+            "lat": float(row['latitude']),
+            "lon": float(row['longitude'])
+        }
+    return zones_dict
+
 @app.post("/api/predict")
 async def predict_duration(req: PredictionRequest):
     """Runs a live prediction through the PySpark ML model."""
